@@ -1,0 +1,16 @@
+{
+  "upstream": {
+    "owner": "isaacs",
+    "repo": "node-lru-cache",
+    "branch": "main"
+  },
+  "npm": {
+    "packageName": "lru-cache-mp",
+    "versionSuffix": "-node16",
+    "description": "Node.js 16+ / WeChat MiniProgram compatible version of lru-cache - A cache object that deletes the least-recently-used items."
+  },
+  "build": {
+    "nodeTarget": "16",
+    "outputDir": "dist"
+  }
+}

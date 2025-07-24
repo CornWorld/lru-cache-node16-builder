@@ -1,0 +1,9 @@
+node_modules/
+dist/
+upstream/
+*.tar.gz
+*.log
+.DS_Store
+package-lock.json
+pnpm-lock.yaml
+yarn.lock

@@ -1,0 +1,43 @@
+{
+  "presets": [
+    [
+      "@babel/preset-env",
+      {
+        "targets": {
+          "node": "16"
+        },
+        "modules": false,
+        "bugfixes": true
+      }
+    ],
+    [
+      "@babel/preset-typescript",
+      {
+        "isTSX": false,
+        "allExtensions": true,
+        "allowNamespaces": true,
+        "allowDeclareFields": true,
+        "onlyRemoveTypeImports": true
+      }
+    ]
+  ],
+  "plugins": [
+    "@babel/plugin-transform-optional-chaining",
+    "@babel/plugin-transform-nullish-coalescing-operator"
+  ],
+  "env": {
+    "commonjs": {
+      "presets": [
+        [
+          "@babel/preset-env",
+          {
+            "targets": {
+              "node": "16"
+            },
+            "modules": "commonjs"
+          }
+        ]
+      ]
+    }
+  }
+}

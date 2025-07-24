@@ -1,0 +1,162 @@
+name: Build and Publish
+
+on:
+  schedule:
+    - cron: '0 * * * *' # 每小时检查一次
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout builder repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '16'
+        registry-url: 'https://registry.npmjs.org'
+    
+    - name: Check upstream version
+      id: check_version
+      run: |
+        # 获取上游最新版本
+        UPSTREAM_VERSION=$(curl -s https://api.github.com/repos/isaacs/node-lru-cache/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+        echo "upstream_version=$UPSTREAM_VERSION" >> $GITHUB_OUTPUT
+        
+        # 检查 npm 上是否已经有这个版本
+        PACKAGE_NAME="lru-cache-mp"
+        NPM_VERSION="${UPSTREAM_VERSION}-node16"
+        
+        if npm view "$PACKAGE_NAME@$NPM_VERSION" version 2>/dev/null; then
+          echo "Version $NPM_VERSION already exists on npm"
+          echo "needs_build=false" >> $GITHUB_OUTPUT
+        else
+          echo "New version detected: $NPM_VERSION"
+          echo "needs_build=true" >> $GITHUB_OUTPUT
+          echo "npm_version=$NPM_VERSION" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Download upstream source
+      if: steps.check_version.outputs.needs_build == 'true'
+      run: |
+        wget -q https://github.com/isaacs/node-lru-cache/archive/v${{ steps.check_version.outputs.upstream_version }}.tar.gz
+        tar -xzf v${{ steps.check_version.outputs.upstream_version }}.tar.gz
+        mv node-lru-cache-${{ steps.check_version.outputs.upstream_version }} upstream
+    
+    - name: Setup build environment
+      if: steps.check_version.outputs.needs_build == 'true'
+      run: |
+        # 安装构建依赖
+        npm install --no-save \
+          @babel/cli \
+          @babel/core \
+          @babel/preset-env \
+          @babel/preset-typescript \
+          @babel/plugin-transform-optional-chaining \
+          @babel/plugin-transform-nullish-coalescing-operator \
+          typescript \
+          esbuild
+    
+    - name: Prepare package.json
+      if: steps.check_version.outputs.needs_build == 'true'
+      run: |
+        # 复制原始 package.json 并修改
+        cp upstream/package.json package.json
+        node -e "
+        const pkg = require('./package.json');
+        const config = require('./build-config.json');
+        pkg.name = config.npm.packageName;
+        pkg.version = '${{ steps.check_version.outputs.npm_version }}';
+        pkg.description = config.npm.description;
+        pkg.repository = {
+          type: 'git',
+          url: 'https://github.com/${{ github.repository }}'
+        };
+        pkg.engines = { node: '>=16' };
+        pkg.homepage = 'https://github.com/${{ github.repository }}';
+        pkg.bugs = {
+          url: 'https://github.com/${{ github.repository }}/issues'
+        };
+        // 移除不需要的脚本和开发依赖
+        delete pkg.scripts;
+        delete pkg.devDependencies;
+        delete pkg.tshy;
+        require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2));
+        "
+    
+    - name: Build for Node 16
+      if: steps.check_version.outputs.needs_build == 'true'
+      run: |
+        # 创建输出目录
+        mkdir -p dist/commonjs dist/esm
+        
+        # 编译 TypeScript 到 JavaScript (CommonJS)
+        npx babel upstream/src --out-dir dist/commonjs --extensions .ts --env commonjs
+        
+        # 编译 TypeScript 到 JavaScript (ESM)
+        npx babel upstream/src --out-dir dist/esm --extensions .ts
+        
+        # 生成类型定义文件
+        npx tsc upstream/src/index.ts \
+          --declaration \
+          --emitDeclarationOnly \
+          --outDir dist/commonjs \
+          --target es2021 \
+          --module commonjs \
+          --moduleResolution node \
+          --esModuleInterop true \
+          --skipLibCheck true
+          
+        cp -r dist/commonjs/*.d.ts dist/esm/ || true
+        
+        # 创建压缩版本
+        npx esbuild dist/esm/index.js --minify --outfile=dist/esm/index.min.js
+        npx esbuild dist/commonjs/index.js --minify --outfile=dist/commonjs/index.min.js
+        
+        # 复制 LICENSE 和 README
+        cp upstream/LICENSE LICENSE
+        cat > README.md << 'EOF'
+        # lru-cache-mp
+        
+        This is a Node.js 16+ compatible build of [lru-cache](https://github.com/isaacs/node-lru-cache) v${{ steps.check_version.outputs.upstream_version }}.
+        
+        For documentation, please refer to the [original repository](https://github.com/isaacs/node-lru-cache).
+        
+        ## Installation
+        
+        ```bash
+        npm install lru-cache-mp
+        ```
+        
+        ## Usage
+        
+        ```javascript
+        import { LRUCache } from 'lru-cache-mp'
+        // or
+        const { LRUCache } = require('lru-cache-mp')
+        ```
+        
+        ## License
+        
+        ISC (same as original)
+        EOF
+    
+    - name: Publish to npm
+      if: steps.check_version.outputs.needs_build == 'true'
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: |
+        npm publish --access public
+    
+    - name: Create release tag
+      if: steps.check_version.outputs.needs_build == 'true'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        git tag -a "v${{ steps.check_version.outputs.npm_version }}" -m "Release v${{ steps.check_version.outputs.npm_version }}"
+        git push origin "v${{ steps.check_version.outputs.npm_version }}"
